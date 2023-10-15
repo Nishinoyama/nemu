@@ -5,14 +5,14 @@ use std::num::Wrapping;
 
 const REGISTER_COUNT: usize = 8;
 
-const EAX: usize = 0;
-const ECX: usize = 1;
-const EDX: usize = 2;
-const EBX: usize = 3;
-const ESP: usize = 4;
-const EBP: usize = 5;
-const ESI: usize = 6;
-const EDI: usize = 7;
+const EAX: u8 = 0;
+const ECX: u8 = 1;
+const EDX: u8 = 2;
+const EBX: u8 = 3;
+const ESP: u8 = 4;
+const EBP: u8 = 5;
+const ESI: u8 = 6;
+const EDI: u8 = 7;
 
 pub struct Emulator {
     /// general purpose registers
@@ -33,7 +33,7 @@ impl Emulator {
             eip: Wrapping(eip),
             memory: vec![0; size],
         };
-        emulator.registers[ESP] = esp;
+        emulator.registers[ESP as usize] = esp;
         emulator
     }
 
@@ -46,11 +46,13 @@ impl Emulator {
             0x89 => Self::mov_rm32_r32,
             0x8b => Self::mov_r32_rm32,
             0xb8..=0xbf => Self::mov_r32_imm32,
+            0xc3 => Self::ret,
             0xc7 => Self::mov_rm32_imm32,
             0xeb => Self::short_jump,
+            0xe8 => Self::call_rel32,
             0xe9 => Self::near_jump,
             0xff => Self::code_ff,
-            _ => unimplemented!(),
+            _ => unimplemented!("Not implemented code: {:02x}", code),
         }
     }
 
@@ -297,5 +299,42 @@ impl Emulator {
     }
     fn set_r32(&mut self, modrm: &ModRM, value: u32) {
         self.set_register32(modrm.op, value);
+    }
+
+    fn push_r32(&mut self) {
+        let reg = self.get_code8(0) - 0x50;
+        self.push32(self.get_register32(reg));
+        self.eip += 1;
+    }
+
+    fn push32(&mut self, value: u32) {
+        let address = self.get_register32(ESP) - 4;
+        self.set_register32(ESP, address);
+        self.set_memory32(address, value);
+    }
+
+    fn pop_r32(&mut self) {
+        let reg = self.get_code8(0) - 0x58;
+        let value = self.pop32();
+        self.set_register32(reg, value);
+        self.eip += 1;
+    }
+
+    fn pop32(&mut self) -> u32 {
+        let address = self.get_register32(ESP);
+        let value = self.get_memory32(address);
+        self.set_register32(ESP, address + 4);
+        value
+    }
+
+    fn call_rel32(&mut self) {
+        let diff = self.get_sign_code32(1);
+        self.push32(self.eip.0 + 5);
+        self.eip += (diff + 5) as u32;
+    }
+
+    fn ret(&mut self) {
+        let address = self.pop32();
+        self.eip = Wrapping(address);
     }
 }
