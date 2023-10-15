@@ -42,12 +42,15 @@ impl Emulator {
         eprintln!("EIP = {:08x}, Code = {:02x}", self.eip, code);
         match self.get_code8(0) {
             0x01 => Self::add_rm32_r32,
+            0x55..=0x58 => Self::push_r32,
+            0x5d..=0x5f => Self::pop_r32,
             0x83 => Self::code_83,
             0x89 => Self::mov_rm32_r32,
             0x8b => Self::mov_r32_rm32,
             0xb8..=0xbf => Self::mov_r32_imm32,
             0xc3 => Self::ret,
             0xc7 => Self::mov_rm32_imm32,
+            0xc9 => Self::leave,
             0xeb => Self::short_jump,
             0xe8 => Self::call_rel32,
             0xe9 => Self::near_jump,
@@ -336,5 +339,13 @@ impl Emulator {
     fn ret(&mut self) {
         let address = self.pop32();
         self.eip = Wrapping(address);
+    }
+
+    fn leave(&mut self) {
+        let ebp = self.get_register32(EBP);
+        self.set_register32(ESP, ebp);
+        let value = self.pop32();
+        self.set_register32(EBP, value);
+        self.eip += 1;
     }
 }
