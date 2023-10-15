@@ -1,6 +1,7 @@
 pub mod modrm;
 
 use crate::emulator::modrm::ModRM;
+use bit_field::BitField;
 use std::num::Wrapping;
 
 const REGISTER_COUNT: usize = 8;
@@ -13,6 +14,11 @@ const ESP: u8 = 4;
 const EBP: u8 = 5;
 const ESI: u8 = 6;
 const EDI: u8 = 7;
+
+const CARRY_FLAG: usize = 0;
+const ZERO_FLAG: usize = 6;
+const SIGN_FLAG: usize = 7;
+const OVERFLOW_FLAG: usize = 11;
 
 pub struct Emulator {
     /// general purpose registers
@@ -44,6 +50,7 @@ impl Emulator {
             0x01 => Self::add_rm32_r32,
             0x55..=0x58 => Self::push_r32,
             0x5d..=0x5f => Self::pop_r32,
+            0x6a => Self::push_imm8,
             0x83 => Self::code_83,
             0x89 => Self::mov_rm32_r32,
             0x8b => Self::mov_r32_rm32,
@@ -117,17 +124,27 @@ impl Emulator {
         let rm32 = self.get_rm32(&modrm);
         self.set_rm32(&modrm, rm32.wrapping_add(r32));
     }
+    fn add_rm32_imm8(&mut self, modrm: &ModRM) {
+        let rm32 = self.get_rm32(modrm);
+        let imm8 = self.get_sign_code8(0) as u32;
+        self.eip += 1;
+        self.set_rm32(modrm, rm32.wrapping_add(imm8));
+    }
     fn sub_rm32_imm8(&mut self, modrm: &ModRM) {
         let rm32 = self.get_rm32(modrm);
         let imm8 = self.get_sign_code8(0) as u32;
         self.eip += 1;
+        let result = (rm32 as u64).wrapping_sub(imm8 as u64);
+        self.update_eflags_sub(rm32, imm8, result);
         self.set_rm32(modrm, rm32.wrapping_sub(imm8));
     }
     fn code_83(&mut self) {
         self.eip += 1;
         let modrm = self.parse_modrm();
         match modrm.op {
+            0 => self.add_rm32_imm8(&modrm),
             5 => self.sub_rm32_imm8(&modrm),
+            7 => self.cmp_rm32_imm8(&modrm),
             _ => unimplemented!("Not implemented 0x83 /{}", modrm.op),
         }
     }
@@ -148,6 +165,22 @@ impl Emulator {
             _ => unimplemented!("Not implemented 0xff /{}", modrm.op),
         }
     }
+    fn cmp_r32_rm32(&mut self) {
+        self.eip += 1;
+        let modrm = self.parse_modrm();
+        let r32 = self.get_r32(&modrm);
+        let rm32 = self.get_rm32(&modrm);
+        let result = (r32 as u64).wrapping_sub(rm32 as u64);
+        self.update_eflags_sub(r32, rm32, result);
+    }
+
+    fn cmp_rm32_imm8(&mut self, modrm: &ModRM) {
+        let rm32 = self.get_rm32(modrm);
+        let imm8 = self.get_sign_code8(0) as u32;
+        self.eip += 1;
+        let result = (rm32 as u64).wrapping_sub(imm8 as u64);
+        self.update_eflags_sub(rm32, imm8, result);
+    }
 
     fn short_jump(&mut self) {
         let diff = self.get_sign_code8(1);
@@ -161,6 +194,22 @@ impl Emulator {
     fn near_jump(&mut self) {
         let diff = self.get_code32(1);
         self.eip += diff.wrapping_add(5);
+    }
+    fn js(&mut self) {
+        let diff = self.get_code32(1);
+        if self.get_sign() {
+            self.eip += diff.wrapping_add(5);
+        } else {
+            self.eip += 5;
+        }
+    }
+    fn jns(&mut self) {
+        let diff = self.get_code32(1);
+        if !self.get_sign() {
+            self.eip += diff.wrapping_add(5);
+        } else {
+            self.eip += 5;
+        }
     }
 
     fn get_code8(&self, index: usize) -> u8 {
@@ -310,6 +359,18 @@ impl Emulator {
         self.eip += 1;
     }
 
+    fn push_imm32(&mut self) {
+        let value = self.get_code32(1);
+        self.push32(value);
+        self.eip += 5;
+    }
+
+    fn push_imm8(&mut self) {
+        let value = self.get_code8(1);
+        self.push32(value as u32);
+        self.eip += 2;
+    }
+
     fn push32(&mut self, value: u32) {
         let address = self.get_register32(ESP) - 4;
         self.set_register32(ESP, address);
@@ -347,5 +408,40 @@ impl Emulator {
         let value = self.pop32();
         self.set_register32(EBP, value);
         self.eip += 1;
+    }
+    fn update_eflags_sub(&mut self, v1: u32, v2: u32, result: u64) {
+        let sign1 = v1.get_bit(31);
+        let sign2 = v2.get_bit(31);
+        let signr = result.get_bit(31);
+
+        self.set_carry(result >> 32 > 0);
+        self.set_zero(result == 0);
+        self.set_sign(signr);
+        self.set_overflow(sign1 != sign2 && sign1 != signr);
+    }
+
+    fn get_carrry(&self) -> bool {
+        self.eflags.get_bit(CARRY_FLAG)
+    }
+    fn get_zero(&self) -> bool {
+        self.eflags.get_bit(ZERO_FLAG)
+    }
+    fn get_sign(&self) -> bool {
+        self.eflags.get_bit(SIGN_FLAG)
+    }
+    fn get_overflow(&self) -> bool {
+        self.eflags.get_bit(OVERFLOW_FLAG)
+    }
+    fn set_carry(&mut self, is_carry: bool) {
+        self.eflags.set_bit(CARRY_FLAG, is_carry);
+    }
+    fn set_zero(&mut self, is_zero: bool) {
+        self.eflags.set_bit(ZERO_FLAG, is_zero);
+    }
+    fn set_sign(&mut self, is_sign: bool) {
+        self.eflags.set_bit(SIGN_FLAG, is_sign);
+    }
+    fn set_overflow(&mut self, is_overflow: bool) {
+        self.eflags.set_bit(OVERFLOW_FLAG, is_overflow);
     }
 }
