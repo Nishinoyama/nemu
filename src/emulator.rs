@@ -17,6 +17,15 @@ const EBP: u8 = 5;
 const ESI: u8 = 6;
 const EDI: u8 = 7;
 
+const AL: u8 = EAX;
+const AH: u8 = AL + 4;
+const CL: u8 = ECX;
+const CH: u8 = CL + 4;
+const DL: u8 = EDX;
+const DH: u8 = DL + 4;
+const BL: u8 = EBX;
+const BH: u8 = BL + 4;
+
 const CARRY_FLAG: usize = 0;
 const ZERO_FLAG: usize = 6;
 const SIGN_FLAG: usize = 7;
@@ -74,8 +83,11 @@ impl Emulator {
         match self.get_code8(0) {
             0x01 => Self::add_rm32_r32,
             0x3b => Self::cmp_r32_rm32,
-            0x55..=0x58 => Self::push_r32,
-            0x5d..=0x5f => Self::pop_r32,
+            0x3c => Self::cmp_al_imm8,
+            0x3d => Self::cmp_eax_imm32,
+            0x40..=0x47 => Self::inc_r32,
+            0x50..=0x57 => Self::push_r32,
+            0x58..=0x5f => Self::pop_r32,
             0x68 => Self::push_imm32,
             0x6a => Self::push_imm8,
             0x70 => Self::jo,
@@ -93,15 +105,20 @@ impl Emulator {
             0x7e => Self::jle,
             0x7f => Self::jnle,
             0x83 => Self::code_83,
+            0x88 => Self::mov_rm8_r8,
             0x89 => Self::mov_rm32_r32,
+            0x8a => Self::mov_r8_rm8,
             0x8b => Self::mov_r32_rm32,
+            0xb0..=0xb7 => Self::mov_r8_imm8,
             0xb8..=0xbf => Self::mov_r32_imm32,
             0xc3 => Self::ret,
             0xc7 => Self::mov_rm32_imm32,
             0xc9 => Self::leave,
-            0xeb => Self::short_jump,
             0xe8 => Self::call_rel32,
             0xe9 => Self::near_jump,
+            0xeb => Self::short_jump,
+            0xec => Self::in_al_dx,
+            0xee => Self::out_dx_al,
             0xff => Self::code_ff,
             _ => unimplemented!("Not implemented code: {:02x}", code),
         }
@@ -135,7 +152,7 @@ impl Emulator {
     fn mov_r32_imm32(&mut self) {
         let reg = self.get_code8(0) - 0xb8;
         let value = self.get_code32(1);
-        self.registers[reg as usize] = value;
+        self.set_register32(reg, value);
         self.eip += 5;
     }
 
@@ -193,6 +210,13 @@ impl Emulator {
         let value = self.get_rm32(modrm);
         self.set_rm32(modrm, value.wrapping_add(1));
     }
+
+    fn inc_r32(&mut self) {
+        let reg = self.get_code8(0) - 0x40;
+        let value = self.get_register32(reg);
+        self.set_register32(reg, value.wrapping_add(1));
+        self.eip += 1;
+    }
     fn dec_rm32(&mut self, modrm: &ModRM) {
         let value = self.get_rm32(modrm);
         self.set_rm32(modrm, value.wrapping_sub(1));
@@ -213,6 +237,14 @@ impl Emulator {
         let rm32 = self.get_rm32(&modrm);
         let result = (r32 as u64).wrapping_sub(rm32 as u64);
         self.update_eflags_sub(r32, rm32, result);
+    }
+
+    fn cmp_eax_imm32(&mut self) {
+        self.eip += 1;
+        let value = self.get_code32(1);
+        let eax = self.get_register32(EAX);
+        let result = (eax as u64).wrapping_sub(value as u64);
+        self.update_eflags_sub(value, eax, result);
     }
 
     fn cmp_rm32_imm8(&mut self, modrm: &ModRM) {
@@ -328,6 +360,24 @@ impl Emulator {
             self.set_memory32(address, value);
         }
     }
+
+    fn get_rm8(&self, modrm: &ModRM) -> u8 {
+        if modrm.is_reg() {
+            self.get_register8(modrm.rm)
+        } else {
+            let address = self.calc_memory_address(modrm);
+            self.get_memory8(address)
+        }
+    }
+
+    fn set_rm8(&mut self, modrm: &ModRM, value: u8) {
+        if modrm.is_reg() {
+            self.set_register8(modrm.rm, value);
+        } else {
+            let address = self.calc_memory_address(modrm);
+            self.set_memory8(address, value);
+        }
+    }
     fn set_register32(&mut self, reg: u8, value: u32) {
         self.registers[reg as usize] = value;
     }
@@ -383,10 +433,10 @@ impl Emulator {
             .to_le_bytes()
             .iter()
             .enumerate()
-            .for_each(|(i, &b)| self.set_memory8(address + i as u32, b as u32));
+            .for_each(|(i, &b)| self.set_memory8(address + i as u32, b));
     }
-    fn set_memory8(&mut self, address: u32, value: u32) {
-        self.memory[address as usize] = value as u8;
+    fn set_memory8(&mut self, address: u32, value: u8) {
+        self.memory[address as usize] = value;
     }
 
     fn get_r32(&self, modrm: &ModRM) -> u32 {
@@ -394,6 +444,12 @@ impl Emulator {
     }
     fn set_r32(&mut self, modrm: &ModRM, value: u32) {
         self.set_register32(modrm.op, value);
+    }
+    fn get_r8(&self, modrm: &ModRM) -> u8 {
+        self.get_register8(modrm.op)
+    }
+    fn set_r8(&mut self, modrm: &ModRM, value: u8) {
+        self.set_register8(modrm.op, value);
     }
 
     fn push_r32(&mut self) {
@@ -452,6 +508,21 @@ impl Emulator {
         self.set_register32(EBP, value);
         self.eip += 1;
     }
+
+    fn in_al_dx(&mut self) {
+        let address = (self.get_register32(EDX) & 0xffff) as u16;
+        let value = self.io_in8(address);
+        self.set_register8(AL, value);
+        self.eip += 1;
+    }
+
+    fn out_dx_al(&mut self) {
+        let address = (self.get_register32(EDX) & 0xffff) as u16;
+        let value = self.get_register8(AL);
+        self.io_out8(address, value);
+        self.eip += 1;
+    }
+
     fn update_eflags_sub(&mut self, v1: u32, v2: u32, result: u64) {
         let sign1 = v1.get_bit(31);
         let sign2 = v2.get_bit(31);
@@ -489,5 +560,72 @@ impl Emulator {
     }
     fn set_overflow(&mut self, is_overflow: bool) {
         self.eflags.set_bit(OVERFLOW_FLAG, is_overflow);
+    }
+    fn io_in8(&self, address: u16) -> u8 {
+        match address {
+            0x03f8 => {
+                let mut buf = String::new();
+                std::io::stdin().read_line(&mut buf).expect("stdio is dead");
+                buf.as_bytes()[0]
+            }
+            _ => 0,
+        }
+    }
+    fn io_out8(&self, address: u16, value: u8) {
+        match address {
+            0x03f8 => {
+                if value.is_ascii() {
+                    print!("{}", value as char);
+                } else {
+                    print!("{:02x}", value);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn mov_r8_imm8(&mut self) {
+        let reg = self.get_code8(0) - 0xb0;
+        let value = self.get_code8(1);
+        self.set_register8(reg, value);
+        self.eip += 2;
+    }
+    fn mov_rm8_r8(&mut self) {
+        self.eip += 1;
+        let modrm = self.parse_modrm();
+        let r8 = self.get_r8(&modrm);
+        self.set_rm8(&modrm, r8);
+    }
+
+    fn mov_r8_rm8(&mut self) {
+        self.eip += 1;
+        let modrm = self.parse_modrm();
+        let rm8 = self.get_rm8(&modrm);
+        self.set_r8(&modrm, rm8);
+    }
+
+    fn cmp_al_imm8(&mut self) {
+        let value = self.get_code8(1);
+        let al = self.get_register8(AL);
+        let result = (al as u64).wrapping_sub(value as u64);
+        self.update_eflags_sub(al as u32, value as u32, result);
+        self.eip += 2;
+    }
+
+    fn get_register8(&self, index: u8) -> u8 {
+        if index < 4 {
+            (self.get_register32(index) & 0xff) as u8
+        } else {
+            (self.get_register32(index - 4) & 0xff00) as u8
+        }
+    }
+    fn set_register8(&mut self, index: u8, value: u8) {
+        if index < 4 {
+            let r = self.get_register32(index) & 0xffffff00;
+            self.set_register32(index, r | value as u32);
+        } else {
+            let r = self.get_register32(index - 4) & 0xffff00ff;
+            self.set_register32(index, r | ((value as u32) << 8));
+        }
     }
 }
