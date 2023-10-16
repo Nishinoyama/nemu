@@ -21,10 +21,10 @@ const ZERO_FLAG: usize = 6;
 const SIGN_FLAG: usize = 7;
 const OVERFLOW_FLAG: usize = 11;
 
-macro_rules! define_jx {
-    ($st:stmt, $f:ident) => {
+macro_rules! define_jcc_8 {
+    ($cc:stmt, $f:ident) => {
         paste! {
-        fn [<j $st>](&mut self) {
+        fn [<j $cc>](&mut self) {
             let diff = self.get_sign_code8(1) as u32;
             if self.$f() {
                 self.eip += diff.wrapping_add(2);
@@ -32,7 +32,7 @@ macro_rules! define_jx {
                 self.eip += 2;
             }
         }
-        fn [<jn $st>](&mut self) {
+        fn [<jn $cc>](&mut self) {
             let diff = self.get_sign_code8(1) as u32;
             if !self.$f() {
                 self.eip += diff.wrapping_add(2);
@@ -75,6 +75,7 @@ impl Emulator {
             0x3b => Self::cmp_r32_rm32,
             0x55..=0x58 => Self::push_r32,
             0x5d..=0x5f => Self::pop_r32,
+            0x68 => Self::push_imm32,
             0x6a => Self::push_imm8,
             0x70 => Self::jo,
             0x71 => Self::jno,
@@ -82,9 +83,12 @@ impl Emulator {
             0x73 => Self::jnc,
             0x74 => Self::jz,
             0x75 => Self::jnz,
+            0x76 => Self::jbe,
+            0x77 => Self::jnbe,
             0x78 => Self::js,
             0x79 => Self::jns,
             0x7c => Self::jl,
+            0x7d => Self::jnl,
             0x7e => Self::jle,
             0x7f => Self::jnle,
             0x83 => Self::code_83,
@@ -232,36 +236,22 @@ impl Emulator {
         self.eip += diff.wrapping_add(5);
     }
 
-    define_jx!(c, get_carrry);
-    define_jx!(z, get_zero);
-    define_jx!(s, get_sign);
-    define_jx!(o, get_overflow);
+    define_jcc_8!(c, get_carrry);
+    define_jcc_8!(z, get_zero);
+    define_jcc_8!(s, get_sign);
+    define_jcc_8!(o, get_overflow);
+    define_jcc_8!(be, get_cond_be);
+    define_jcc_8!(l, get_cond_l);
+    define_jcc_8!(le, get_cond_le);
 
-    fn jl(&mut self) {
-        let diff = self.get_sign_code8(1) as u32;
-        if self.get_sign() != self.get_overflow() {
-            self.eip += diff.wrapping_add(2);
-        } else {
-            self.eip += 2;
-        }
+    fn get_cond_be(&self) -> bool {
+        self.get_carrry() || self.get_zero()
     }
-
-    fn jle(&mut self) {
-        let diff = self.get_code8(1) as u32;
-        if self.get_zero() || self.get_sign() != self.get_overflow() {
-            self.eip += diff.wrapping_add(2);
-        } else {
-            self.eip += 2;
-        }
+    fn get_cond_l(&self) -> bool {
+        self.get_sign() != self.get_overflow()
     }
-
-    fn jnle(&mut self) {
-        let diff = self.get_code8(1) as u32;
-        if !(self.get_zero() || self.get_sign() != self.get_overflow()) {
-            self.eip += diff.wrapping_add(2);
-        } else {
-            self.eip += 2;
-        }
+    fn get_cond_le(&self) -> bool {
+        self.get_zero() || self.get_sign() != self.get_overflow()
     }
 
     fn get_code8(&self, index: usize) -> u8 {
@@ -472,6 +462,9 @@ impl Emulator {
         self.set_overflow(sign1 != sign2 && sign1 != signr);
     }
 
+    fn get_flag(&self, flag: usize) -> bool {
+        self.eflags.get_bit(flag)
+    }
     fn get_carrry(&self) -> bool {
         self.eflags.get_bit(CARRY_FLAG)
     }
