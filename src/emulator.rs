@@ -189,12 +189,12 @@ impl Emulator {
         }
     }
     fn inc_rm32(&mut self, modrm: &ModRM) {
-        let value = self.get_rm32(&modrm);
-        self.set_rm32(&modrm, value.wrapping_add(1));
+        let value = self.get_rm32(modrm);
+        self.set_rm32(modrm, value.wrapping_add(1));
     }
     fn dec_rm32(&mut self, modrm: &ModRM) {
-        let value = self.get_rm32(&modrm);
-        self.set_rm32(&modrm, value.wrapping_sub(1));
+        let value = self.get_rm32(modrm);
+        self.set_rm32(modrm, value.wrapping_sub(1));
     }
     fn code_ff(&mut self) {
         self.eip += 1;
@@ -236,7 +236,7 @@ impl Emulator {
         self.eip += diff.wrapping_add(5);
     }
 
-    define_jcc_8!(c, get_carrry);
+    define_jcc_8!(c, get_carry);
     define_jcc_8!(z, get_zero);
     define_jcc_8!(s, get_sign);
     define_jcc_8!(o, get_overflow);
@@ -245,7 +245,7 @@ impl Emulator {
     define_jcc_8!(le, get_cond_le);
 
     fn get_cond_be(&self) -> bool {
-        self.get_carrry() || self.get_zero()
+        self.get_carry() || self.get_zero()
     }
     fn get_cond_l(&self) -> bool {
         self.get_sign() != self.get_overflow()
@@ -465,7 +465,7 @@ impl Emulator {
     fn get_flag(&self, flag: usize) -> bool {
         self.eflags.get_bit(flag)
     }
-    fn get_carrry(&self) -> bool {
+    fn get_carry(&self) -> bool {
         self.eflags.get_bit(CARRY_FLAG)
     }
     fn get_zero(&self) -> bool {
