@@ -2,6 +2,7 @@ pub mod modrm;
 
 use crate::emulator::modrm::ModRM;
 use bit_field::BitField;
+use log::info;
 use paste::paste;
 use std::num::Wrapping;
 
@@ -69,7 +70,7 @@ impl Emulator {
 
     pub fn instruction(&mut self) -> fn(&mut Emulator) {
         let code = self.get_code8(0);
-        eprintln!("EIP = {:08x}, Code = {:02x}", self.eip, code);
+        info!("EIP = {:08x}, Code = {:02x}", self.eip, code);
         match self.get_code8(0) {
             0x01 => Self::add_rm32_r32,
             0x3b => Self::cmp_r32_rm32,
@@ -124,7 +125,7 @@ impl Emulator {
             self.eip += 1;
         }
 
-        eprintln!(
+        info!(
             "mod = {}, op = {}, rm = {} ({:02X})",
             modrm.md, modrm.op, modrm.rm, code
         );
