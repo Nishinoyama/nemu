@@ -2,6 +2,7 @@ pub mod modrm;
 
 use crate::emulator::modrm::ModRM;
 use bit_field::BitField;
+use paste::paste;
 use std::num::Wrapping;
 
 const REGISTER_COUNT: usize = 8;
@@ -19,6 +20,29 @@ const CARRY_FLAG: usize = 0;
 const ZERO_FLAG: usize = 6;
 const SIGN_FLAG: usize = 7;
 const OVERFLOW_FLAG: usize = 11;
+
+macro_rules! define_jx {
+    ($st:stmt, $f:ident) => {
+        paste! {
+        fn [<j $st>](&mut self) {
+            let diff = self.get_sign_code8(1) as u32;
+            if self.$f() {
+                self.eip += diff.wrapping_add(2);
+            } else {
+                self.eip += 2;
+            }
+        }
+        fn [<jn $st>](&mut self) {
+            let diff = self.get_sign_code8(1) as u32;
+            if !self.$f() {
+                self.eip += diff.wrapping_add(2);
+            } else {
+                self.eip += 2;
+            }
+        }
+        }
+    };
+}
 
 pub struct Emulator {
     /// general purpose registers
@@ -48,9 +72,21 @@ impl Emulator {
         eprintln!("EIP = {:08x}, Code = {:02x}", self.eip, code);
         match self.get_code8(0) {
             0x01 => Self::add_rm32_r32,
+            0x3b => Self::cmp_r32_rm32,
             0x55..=0x58 => Self::push_r32,
             0x5d..=0x5f => Self::pop_r32,
             0x6a => Self::push_imm8,
+            0x70 => Self::jo,
+            0x71 => Self::jno,
+            0x72 => Self::jc,
+            0x73 => Self::jnc,
+            0x74 => Self::jz,
+            0x75 => Self::jnz,
+            0x78 => Self::js,
+            0x79 => Self::jns,
+            0x7c => Self::jl,
+            0x7e => Self::jle,
+            0x7f => Self::jnle,
             0x83 => Self::code_83,
             0x89 => Self::mov_rm32_r32,
             0x8b => Self::mov_r32_rm32,
@@ -195,20 +231,36 @@ impl Emulator {
         let diff = self.get_code32(1);
         self.eip += diff.wrapping_add(5);
     }
-    fn js(&mut self) {
-        let diff = self.get_code32(1);
-        if self.get_sign() {
-            self.eip += diff.wrapping_add(5);
+
+    define_jx!(c, get_carrry);
+    define_jx!(z, get_zero);
+    define_jx!(s, get_sign);
+    define_jx!(o, get_overflow);
+
+    fn jl(&mut self) {
+        let diff = self.get_sign_code8(1) as u32;
+        if self.get_sign() != self.get_overflow() {
+            self.eip += diff.wrapping_add(2);
         } else {
-            self.eip += 5;
+            self.eip += 2;
         }
     }
-    fn jns(&mut self) {
-        let diff = self.get_code32(1);
-        if !self.get_sign() {
-            self.eip += diff.wrapping_add(5);
+
+    fn jle(&mut self) {
+        let diff = self.get_code8(1) as u32;
+        if self.get_zero() || self.get_sign() != self.get_overflow() {
+            self.eip += diff.wrapping_add(2);
         } else {
-            self.eip += 5;
+            self.eip += 2;
+        }
+    }
+
+    fn jnle(&mut self) {
+        let diff = self.get_code8(1) as u32;
+        if !(self.get_zero() || self.get_sign() != self.get_overflow()) {
+            self.eip += diff.wrapping_add(2);
+        } else {
+            self.eip += 2;
         }
     }
 
