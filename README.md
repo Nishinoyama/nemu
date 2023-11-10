@@ -1,4 +1,4 @@
-# NEMU - Simple x86 Emulator written in rust
+# NEMU - Simple x86 Emulator written in Rust
 
 ## 役に立ったcrateとか
 
